@@ -3,13 +3,22 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
-.env
-.env.*
-*.pem
-*.key
 .DS_Store
 out/**
 !out/.gitkeep
 sources/*.html
 sources/*.bin
 .cache/
+
+# secrets / credentials / sessions
+.env
+.env.*
+*.pem
+*.key
+*credentials*
+*secret*
+cookies.txt
+*.cookies
+session*
+.npmrc
+auth.json
