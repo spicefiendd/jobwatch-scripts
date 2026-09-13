@@ -140,7 +140,13 @@ def main() -> int:
         "--bootstrap",
         action="store_true",
         help="if --previous is missing, treat all current pocket jobs as baseline "
-        "(unchanged), write previous=current, exit 10 (quiet). Use on first run.",
+        "(unchanged), write previous=current, exit 10 (quiet). Default when previous "
+        "is missing unless --strict.",
+    )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="fail (exit 2) if --previous is missing instead of auto-bootstrapping.",
     )
     args = ap.parse_args()
 
@@ -151,7 +157,14 @@ def main() -> int:
         return 2
 
     if not args.previous.exists():
-        if args.bootstrap or args.promote:
+        if args.strict and not (args.bootstrap or args.promote):
+            print(
+                f"error: previous scan missing: {args.previous}\n"
+                f"hint: omit --strict to auto-bootstrap, or pass --bootstrap.",
+                file=sys.stderr,
+            )
+            return 2
+        if True:  # auto-bootstrap (or explicit --bootstrap/--promote)
             args.previous.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(args.current, args.previous)
             hist_dir = None if args.no_history else args.history_dir
@@ -182,12 +195,6 @@ def main() -> int:
             print("=== New Warsaw manager hits ===\n(none)")
             print("=== New Plymouth manager hits ===\n(none)")
             return 10
-        print(
-            f"error: previous scan missing: {args.previous}\n"
-            f"hint: pass --bootstrap on first run, or copy a prior out/scan.json there.",
-            file=sys.stderr,
-        )
-        return 2
 
     try:
         previous = load_scan(args.previous)

@@ -1,9 +1,11 @@
 """Tiny HTTP helpers (stdlib only)."""
 from __future__ import annotations
 
+import http.client
 import http.cookiejar
 import json
 import ssl
+import time
 import urllib.error
 import urllib.request
 from typing import Any
@@ -28,22 +30,31 @@ def request(
     headers: dict[str, str] | None = None,
     opener: urllib.request.OpenerDirector | None = None,
     timeout: float = 30,
+    retries: int = 3,
 ) -> tuple[int, bytes, dict[str, str]]:
     h = {"User-Agent": UA, "Accept": "*/*"}
     if headers:
         h.update(headers)
-    req = urllib.request.Request(
-        url, data=data, headers=h, method=method or ("POST" if data is not None else "GET")
-    )
-    open_fn = opener.open if opener else lambda r, timeout=timeout: urllib.request.urlopen(
-        r, context=CTX, timeout=timeout
-    )
-    try:
-        with open_fn(req, timeout=timeout) as resp:
-            return resp.status, resp.read(), {k.lower(): v for k, v in resp.headers.items()}
-    except urllib.error.HTTPError as e:
-        body = e.read() if hasattr(e, "read") else b""
-        raise RuntimeError(f"HTTP {e.code} for {url}: {body[:200]!r}") from e
+    last_err: Exception | None = None
+    for attempt in range(max(1, retries)):
+        req = urllib.request.Request(
+            url, data=data, headers=h, method=method or ("POST" if data is not None else "GET")
+        )
+        open_fn = opener.open if opener else (
+            lambda r, timeout=timeout: urllib.request.urlopen(r, context=CTX, timeout=timeout)
+        )
+        try:
+            with open_fn(req, timeout=timeout) as resp:
+                return resp.status, resp.read(), {k.lower(): v for k, v in resp.headers.items()}
+        except urllib.error.HTTPError as e:
+            body = e.read() if hasattr(e, "read") else b""
+            raise RuntimeError(f"HTTP {e.code} for {url}: {body[:200]!r}") from e
+        except (http.client.IncompleteRead, urllib.error.URLError, TimeoutError, OSError) as e:
+            last_err = e
+            if attempt + 1 >= retries:
+                break
+            time.sleep(0.6 * (attempt + 1))
+    raise RuntimeError(f"HTTP failed for {url} after {retries} tries: {last_err}") from last_err
 
 
 def get_json(url: str, **kw: Any) -> Any:
