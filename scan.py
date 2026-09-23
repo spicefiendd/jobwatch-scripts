@@ -6,8 +6,10 @@ Usage:
   python3 scan.py --json out/scan.json
   python3 scan.py --source 1stsource,everwise,slate,lakecity,zimmer,hershey,ats,interra
   python3 scan.py --all
+  python3 scan.py --source ...,linkedin   # optional LinkedIn guest CSA sweep
 
-Exit 10 if Warsaw+Plymouth manager pockets empty.
+Exit 10 if BOTH manager (warsaw+plymouth) AND CSA (warsaw_csa+plymouth_csa)
+notify pockets are empty.
 """
 from __future__ import annotations
 
@@ -21,9 +23,10 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 
 from lib.adp import fetch_lake_city_adp  # noqa: E402
-from lib.filters import classify  # noqa: E402
+from lib.filters import NOTIFY_POCKETS, classify, has_bachelors_wall  # noqa: E402
 from lib.hershey import fetch_hershey  # noqa: E402
 from lib.html_careers import fetch_purity_gas  # noqa: E402
+from lib.linkedin_guest import fetch_csa_searches  # noqa: E402
 from lib.models import Job  # noqa: E402
 from lib.phenom import fetch_phenom  # noqa: E402
 from lib.talentbrew import fetch_ats  # noqa: E402
@@ -41,9 +44,10 @@ SOURCES = {
     "hershey": "Hershey SuccessFactors HTML search",
     "ats": "ATS Advanced Technology Services TalentBrew",
     "purity": "Purity Gas HTML careers",
+    "linkedin": "LinkedIn guest CSA keyword sweep (optional/fragile)",
 }
 
-DEFAULT = "1stsource,everwise,slate,lakecity,zimmer,hershey,ats,interra,purity"
+DEFAULT = "1stsource,everwise,slate,lakecity,zimmer,hershey,ats,interra,purity,linkedin"
 
 
 def gather(selected: list[str]) -> tuple[list[Job], dict[str, str]]:
@@ -77,6 +81,8 @@ def gather(selected: list[str]) -> tuple[list[Job], dict[str, str]]:
         run("ats", lambda: fetch_ats(location="Indiana", per_page=50))
     if "purity" in selected:
         run("purity", fetch_purity_gas)
+    if "linkedin" in selected:
+        run("linkedin", fetch_csa_searches)
     return jobs, errors
 
 
@@ -90,16 +96,22 @@ def fmt_job(j: Job) -> str:
         bits.append(j.salary)
     if j.education:
         bits.append(j.education)
+    if has_bachelors_wall(j):
+        bits.append("[bachelor wall?]")
     if j.url:
         bits.append(j.url)
     return " | ".join(bits)
+
+
+def _dump_jobs(jobs: list[Job]) -> list[dict]:
+    return [j.to_dict() for j in jobs]
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="JobWatch HTTP job scan")
     ap.add_argument("--source", default=DEFAULT, help="comma list: " + ",".join(SOURCES))
     ap.add_argument("--json", dest="json_path", help="write full JSON report")
-    ap.add_argument("--all", action="store_true", help="also print near-miss / out-of-radius managers")
+    ap.add_argument("--all", action="store_true", help="also print near-miss / out-of-radius + other")
     ap.add_argument("--raw", action="store_true", help="print every fetched job before filtering")
     args = ap.parse_args()
     selected = [s.strip() for s in args.source.split(",") if s.strip()]
@@ -118,10 +130,13 @@ def main() -> int:
         "fetched": len(jobs),
         "errors": errors,
         "browser_fallback": [],
-        "warsaw": [j.to_dict() for j in buckets["warsaw"]],
-        "plymouth": [j.to_dict() for j in buckets["plymouth"]],
-        "near_miss": [j.to_dict() for j in buckets["near_miss"]],
-        "other_in_pocket": [j.to_dict() for j in buckets["other"]],
+        "warsaw": _dump_jobs(buckets["warsaw"]),
+        "plymouth": _dump_jobs(buckets["plymouth"]),
+        "warsaw_csa": _dump_jobs(buckets["warsaw_csa"]),
+        "plymouth_csa": _dump_jobs(buckets["plymouth_csa"]),
+        "near_miss": _dump_jobs(buckets["near_miss"]),
+        "near_miss_csa": _dump_jobs(buckets["near_miss_csa"]),
+        "other_in_pocket": _dump_jobs(buckets["other"]),
     }
     # Known browser-only targets (not in this fetch set)
     report["browser_fallback"].extend(
@@ -130,7 +145,7 @@ def main() -> int:
             "pregis: Dayforce jobs.dayforcehcm.com/api/geo/.../jobposting/search returns 403 without browser client",
             "wildman: secure*.entertimeonline.com Career Search SPA — no durable public JSON yet",
             "indeed: RSS/search 403",
-            "linkedin: guest HTML cards work (fragile); prefer employer ATS",
+            "linkedin: guest HTML cards wired as optional --source linkedin (fragile; rate-limits)",
         ]
     )
 
@@ -158,11 +173,28 @@ def main() -> int:
     else:
         print("(none)")
 
+    print("=== Warsaw CSA (entry/mid systems analyst, ~10mi) ===")
+    if buckets["warsaw_csa"]:
+        for j in buckets["warsaw_csa"]:
+            print("-", fmt_job(j))
+    else:
+        print("(none)")
+
+    print("=== Plymouth CSA (entry/mid systems analyst, ~10mi) ===")
+    if buckets["plymouth_csa"]:
+        for j in buckets["plymouth_csa"]:
+            print("-", fmt_job(j))
+    else:
+        print("(none)")
+
     if args.all:
         print("=== Near-miss / outside radius managers ===")
         for j in buckets["near_miss"]:
             print("-", fmt_job(j))
-        print("=== Other in-pocket (not manager filter) ===")
+        print("=== Near-miss CSA (systems analyst outside radius) ===")
+        for j in buckets["near_miss_csa"]:
+            print("-", fmt_job(j))
+        print("=== Other in-pocket (not manager/CSA notify) ===")
         for j in buckets["other"]:
             print("-", fmt_job(j))
 
@@ -171,7 +203,8 @@ def main() -> int:
         for line in report["browser_fallback"]:
             print(line, file=sys.stderr)
 
-    if not buckets["warsaw"] and not buckets["plymouth"]:
+    notify_empty = all(not buckets[p] for p in NOTIFY_POCKETS)
+    if notify_empty:
         return 10
     return 0
 

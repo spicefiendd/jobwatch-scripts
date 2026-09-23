@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 """Compare JobWatch scan JSON week-over-week.
 
-Prints ONLY new/changed Warsaw + Plymouth people-manager hits vs the previous
-snapshot. Exit 10 when there is nothing new to notify about.
+Prints ONLY new/changed notify-pocket hits vs the previous snapshot:
+  warsaw, plymouth (people-managers)
+  warsaw_csa, plymouth_csa (entry/mid Computer Systems Analyst track)
+
+Exit 10 when there is nothing new to notify about in ANY of those pockets
+(i.e. both manager AND CSA tracks are quiet).
 
 Usage:
   python3 jobwatch-diff.py \\
@@ -16,12 +20,7 @@ Usage:
   python3 jobwatch-diff.py --current out/scan.json --previous out/scan-prev.json \\
     --promote
 
-  # Or point at a dated history file:
-  python3 jobwatch-diff.py --current out/scan.json \\
-    --previous out/history/2026-09-01.json
-
 Identity key (stable): url if present, else title|employer|location (casefold).
-Buckets compared: warsaw + plymouth only (manager lists already filtered by scan.py).
 """
 from __future__ import annotations
 
@@ -34,7 +33,13 @@ from pathlib import Path
 from typing import Any
 
 
-POCKETS = ("warsaw", "plymouth")
+POCKETS = ("warsaw", "plymouth", "warsaw_csa", "plymouth_csa")
+POCKET_LABELS = {
+    "warsaw": "Warsaw manager",
+    "plymouth": "Plymouth manager",
+    "warsaw_csa": "Warsaw CSA",
+    "plymouth_csa": "Plymouth CSA",
+}
 
 
 def job_key(j: dict[str, Any]) -> str:
@@ -102,6 +107,10 @@ def promote(current: Path, previous: Path, history_dir: Path | None) -> None:
             print(f"history refreshed: {hist}", file=sys.stderr)
     shutil.copy2(current, previous)
     print(f"promoted current → {previous}", file=sys.stderr)
+
+
+def _empty_new_gone() -> tuple[dict, dict]:
+    return ({p: [] for p in POCKETS}, {p: [] for p in POCKETS})
 
 
 def main() -> int:
@@ -177,13 +186,14 @@ def main() -> int:
                 f"({sum(len(current.get(p) or []) for p in POCKETS)} pocket jobs). Quiet.",
                 file=sys.stderr,
             )
+            new, gone = _empty_new_gone()
             report = {
                 "as_of": datetime.now(timezone.utc).isoformat(),
                 "current": str(args.current),
                 "previous": str(args.previous),
                 "bootstrapped": True,
-                "new": {"warsaw": [], "plymouth": []},
-                "gone": {"warsaw": [], "plymouth": []},
+                "new": new,
+                "gone": gone,
                 "unchanged_count": {
                     p: len(current.get(p) or []) for p in POCKETS
                 },
@@ -192,8 +202,8 @@ def main() -> int:
                 args.json_path.parent.mkdir(parents=True, exist_ok=True)
                 args.json_path.write_text(json.dumps(report, indent=2))
                 print(f"wrote {args.json_path}", file=sys.stderr)
-            print("=== New Warsaw manager hits ===\n(none)")
-            print("=== New Plymouth manager hits ===\n(none)")
+            for pocket in POCKETS:
+                print(f"=== New {POCKET_LABELS[pocket]} hits ===\n(none)")
             return 10
 
     try:
@@ -201,6 +211,21 @@ def main() -> int:
     except Exception as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
+
+    # If previous predates CSA buckets, quietly seed them from current so the
+    # first CSA-enabled run does not spam every CSA hit as "NEW". Live scan
+    # still reports current CSA/manager inventory separately.
+    csa_seeded = False
+    for p in ("warsaw_csa", "plymouth_csa"):
+        if p not in previous:
+            previous[p] = list(current.get(p) or [])
+            csa_seeded = True
+    if csa_seeded:
+        print(
+            "note: previous scan lacked CSA buckets — seeded from current "
+            "(quiet CSA bootstrap; managers still week-over-week).",
+            file=sys.stderr,
+        )
 
     cur_m = pocket_map(current)
     prev_m = pocket_map(previous)
@@ -235,19 +260,13 @@ def main() -> int:
         args.json_path.write_text(json.dumps(report, indent=2))
         print(f"wrote {args.json_path}", file=sys.stderr)
 
-    print("=== New Warsaw manager hits ===")
-    if new["warsaw"]:
-        for j in new["warsaw"]:
-            print("-", fmt_job(j))
-    else:
-        print("(none)")
-
-    print("=== New Plymouth manager hits ===")
-    if new["plymouth"]:
-        for j in new["plymouth"]:
-            print("-", fmt_job(j))
-    else:
-        print("(none)")
+    for pocket in POCKETS:
+        print(f"=== New {POCKET_LABELS[pocket]} hits ===")
+        if new[pocket]:
+            for j in new[pocket]:
+                print("-", fmt_job(j))
+        else:
+            print("(none)")
 
     if report["gone_total"]:
         print("=== Gone since previous (FYI) ===")
