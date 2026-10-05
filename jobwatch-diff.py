@@ -26,12 +26,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import shutil
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+
+STATE_DIR = Path(os.environ.get("JOBWATCH_STATE_DIR") or Path.home() / ".local" / "state" / "jobwatch")
 
 POCKETS = ("warsaw", "plymouth", "warsaw_csa", "plymouth_csa")
 POCKET_LABELS = {
@@ -107,6 +110,11 @@ def promote(current: Path, previous: Path, history_dir: Path | None) -> None:
             print(f"history refreshed: {hist}", file=sys.stderr)
     shutil.copy2(current, previous)
     print(f"promoted current → {previous}", file=sys.stderr)
+    state_prev = STATE_DIR / "scan-prev.json"
+    if previous.resolve() != state_prev.resolve():
+        state_prev.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(current, state_prev)
+        print(f"mirrored baseline → {state_prev}", file=sys.stderr)
 
 
 def _empty_new_gone() -> tuple[dict, dict]:
@@ -125,8 +133,8 @@ def main() -> int:
     ap.add_argument(
         "--previous",
         type=Path,
-        default=root / "out" / "scan-prev.json",
-        help="last baseline scan JSON (default: out/scan-prev.json)",
+        default=STATE_DIR / "scan-prev.json",
+        help="last baseline scan JSON (default: $JOBWATCH_STATE_DIR or ~/.local/state/jobwatch/scan-prev.json; kept outside the repo so cleanups of out/ do not wipe it)",
     )
     ap.add_argument("--json", dest="json_path", type=Path, help="write diff JSON")
     ap.add_argument(
@@ -137,8 +145,8 @@ def main() -> int:
     ap.add_argument(
         "--history-dir",
         type=Path,
-        default=root / "out" / "history",
-        help="with --promote, also save dated copy here (default: out/history)",
+        default=STATE_DIR / "history",
+        help="with --promote, also save dated copy here (default: state dir /history)",
     )
     ap.add_argument(
         "--no-history",
@@ -158,6 +166,12 @@ def main() -> int:
         help="fail (exit 2) if --previous is missing instead of auto-bootstrapping.",
     )
     args = ap.parse_args()
+    state_prev = STATE_DIR / "scan-prev.json"
+    legacy_prev = args.previous
+    # Legacy callers pass out/scan-prev.json; fall back to the persistent copy.
+    if not args.previous.exists() and state_prev.exists():
+        print(f"previous missing at {args.previous}; using {state_prev}", file=sys.stderr)
+        args.previous = state_prev
 
     try:
         current = load_scan(args.current)

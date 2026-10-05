@@ -36,3 +36,5 @@ python3 jobwatch-diff.py --current out/scan.json --previous out/scan-prev.json -
 Exit `10` = no new manager **or** CSA pocket hits (stay quiet). Exit `0` = something new to ping.
 
 CSA title match is tight (`Systems Analyst`, `Computer Systems Analyst`, `IT Systems Analyst`, `Jr/Junior Systems Analyst`, `IT Analyst`, `Business/Application Systems Analyst`). Help Desk / generic IT Support are excluded unless the title is clearly systems-analyst. Senior/Lead/Principal CSA titles in-pocket land in `other` (visible with `--all`), not the CSA notify buckets.
+
+Baseline + dated history live outside the repo at `$JOBWATCH_STATE_DIR` (default `~/.local/state/jobwatch/`), so cleaning `out/` never wipes week-over-week state. Omit `--previous` to use it; a missing legacy `--previous out/scan-prev.json` falls back to it.
